@@ -1,0 +1,411 @@
+//----------------------------------------------------------------
+include "auxfunc.edp";
+include "parameters.edp";
+fespace Xh2(Mh2,P2);
+fespace Xh1(Mh1,P2);
+fespace Xha(Mha,P2);
+fespace Ph(Mh2,P0);
+
+Ph reg=region, domain11, domain2, reps, ieps, rmu, imu;
+int ireg11,ireg2;
+
+ireg11 = reg(0,(r+R)/2-0.5); //, ireg2=reg(xc2,yc2), ireg3=reg(xc3,yc3), ireg4=reg(xc4,yc4);
+ireg2 = reg(0, 0.9*R);
+domain11 = 0. + 1.*(region==ireg11);//layer
+domain2 = 0. + 1.*(region==ireg2);//outer circle
+reps = 1.*domain2 + rn11*domain11 ;//|region==ireg2|region==ireg3|region==ireg4);
+ieps = 0. + in11*domain11; //|region==ireg2|region==ireg3|region==ireg4);
+rmu   = 1. ;//+ rdinvmu*(region==ireg1|region==ireg2|region==ireg3|region==ireg4);
+imu   = 0. ;//+ idinvmu*(region==ireg1|region==ireg2|region==ireg3|region==ireg4);
+
+Ph<complex> eps = reps + 1.i*ieps;
+Ph<complex> mu = rmu + 1.i*imu;
+
+
+	Xh2<complex>  u2,v2;
+	Xh1<complex>  u1,v1;
+
+	// Matrix of integration of  exp(intheta) against the finite elements on the boundary B_R
+	complex[int,int] vDtN( Xh2.ndof, 2*nbfpro+1);
+	complex[int,int] vDtNp( Xh2.ndof, 2*nbfpro+1);
+	matrix<complex> DtN, Mp;
+
+		for (int n=-nbfpro;n<nbfpro+1;n++)
+		{
+			func fe= expinp(x,y,n,R,0.);
+			varf FiniFourier(u2,v2) = int1d(Mh2,2)(v2*fe);
+			complex[int] temp = FiniFourier(0,Xh2);
+			vDtN(:,n+nbfpro)=temp;
+		}
+	DtN=vDtN;
+
+	// Construction of the diagonal matrix to construct the EFL (DtN)
+	// as well as the diagonal matrix that represents the far-field pattern map in Fourier basis
+	matrix<complex> D,Dfar;
+
+	complex[int] diagofD(2*nbfpro+1);
+	complex[int] diagofDfar(2*nbfpro+1);
+
+	complex hnr,hnm,hn0,hn1,hnp;
+
+	hn0=jn(0,k*R)+1.i*yn(0,k*R);
+	hn1=jn(1,k*R)+1.i*yn(1,k*R);
+	diagofD[nbfpro] = k*hn1/hn0;
+	diagofDfar[nbfpro] = sqrt(2./(pi*k*1.))*(1./hn0)*exp(-1.i*pi/4)*sqrt(1./(2.*pi*R));//
+
+	for (int n =1;n<nbfpro;n++)
+	{
+		hnr = jn(n,k*R)+1.i*yn(n,k*R);//hn
+		hnm = jn(-n,k*R)+1.i*yn(-n,k*R);;//h-n
+		hnp = -n*hnr/(k*R) + (jn(n+1,k*R)+1.i*yn(n+1,k*R));//derivative of hnr
+	
+		diagofD[nbfpro+n] = k*hnp/hnr;
+		diagofD[nbfpro-n] = k*hnp/hnr;
+	
+		diagofDfar[nbfpro+n] = sqrt(1./(2.*pi*R))*(1./hnr)*exp(-1.i*((n*pi/2)+(pi/4)))*sqrt(2./(pi*k*1.));
+		diagofDfar[nbfpro-n] = sqrt(1./(2.*pi*R))*(1./hnm)*exp(-1.i*((-n*pi/2)+(pi/4)))*sqrt(2./(pi*k*1.));
+
+	}
+	D = [diagofD];
+	Dfar = [diagofDfar];
+
+	// Rewriting the DtN map (EFL) in the finite-element basis so it can be integrated to the variational formulation
+	matrix<complex> EFL ;
+	EFL = DtN*D;
+	EFL = EFL*DtN';
+
+
+if((scatterer=="circle"||scatterer=="kite")){// && MediumType == "nonlayered"){
+
+	cout<<"scatterer="<<scatterer<<endl;
+	cout<<"MediumType="<<MediumType<<endl;
+	//----------------------------------------------------------------
+	// Finite element spaces
+
+	// ---------------------------------------------------------------
+	// Variational formulation (Helmholtz) with ATC's
+	// ---------------------------------------------------------------
+	
+	// Parameters for the ATC
+	func fplus = -(d^-4)*(atan2(y,x)+d)^2*(atan2(y,x)-d)^2;//-(d^-8)*(atan2(y,x)+d)^4*(atan2(y,x)-d)^4;
+		// For f- = 0
+	func fminus = 0.;
+	func alpha0 = fplus*( (rmu0+1.i*imu0) - 1. ) 
+			+ fminus*( (rmu0+1.i*imu0) - (rmu1 + 1.i*imu1) )
+			;
+	func beta1 = fplus*( (1./(rmu0+1.i*imu0)) - (1./1.) )
+			+ fminus*( (1/(rmu0+1.i*imu0)) - (1./(rmu1 + 1.i*imu1)) )
+			;
+	func beta2 = fplus*k^2*(1.-(rn0+1.i*in0))
+			+ fminus*k^2*((rn1+1.i*in1)-(rn0+1.i*in0))
+			;
+	func alpha1 = 10.^-9;
+
+	// Construction of the matrix to be inverted
+
+	macro ds(u) (-dx(u)*N.y+dy(u)*N.x)//
+	varf Cl2(u2,v2)=  int2d(Mh2)((1./mu)*(dx(u2)*dx(v2)+dy(u2)*dy(v2)))
+			+ int2d(Mh2)(-k^2.*eps*(u2*v2))
+			+ int1d(Mh2,0)(delta*0.25*beta1*ds(u2)*ds(v2)) //need to have positive beta 1
+			+ int1d(Mh2,0)(0.25*delta*beta2*u2*v2)
+			+ int1d(Mh2,0)((delta^-1)*(alpha0^-1)*u2*v2)
+			+ int1d(Mh2,1)((alpha1^-1)*u2*v2)
+			;
+
+	varf Cl1(u1,v1)=int2d(Mh1)((1/(rmu1+1.i*imu1))*(dx(u1)*dx(v1)+dy(u1)*dy(v1)))
+			+ int2d(Mh1)(-k^2.*(rn1+1.i*in1)*(u1*v1))
+			+ int1d(Mh1,0)(delta*0.25*beta1*ds(u1)*ds(v1))
+			+ int1d(Mh1,0)(0.25*delta*beta2*u1*v1)
+			+ int1d(Mh1,0)((delta^-1)*(alpha0^-1)*u1*v1)
+			+ int1d(Mh1,1)((alpha1^-1)*u1*v1)
+			;
+
+	varf Cl12(u2,v1)=int1d(Mha,0)(delta*0.25*beta1*ds(u2)*ds(v1))
+			+ int1d(Mha,0)(0.25*delta*beta2*u2*v1)
+			+ int1d(Mha,0)(-(delta^-1)*(alpha0^-1)*u2*v1)
+			+ int1d(Mha,1)(-(alpha1^-1)*u2*v1)				
+			;
+
+	varf Cl21(u1,v2)=int1d(Mha,0)(delta*0.25*beta1*ds(u1)*ds(v2))
+			+ int1d(Mha,0)(0.25*delta*beta2*u1*v2)
+			+ int1d(Mha,0)(-(delta^-1)*(alpha0^-1)*u1*v2)
+			+ int1d(Mha,1)(-(alpha1^-1)*u1*v2)
+			;
+
+	matrix <complex> A22 = Cl2(Xh2,Xh2);
+	matrix <complex> A11 = Cl1(Xh1,Xh1);
+	matrix <complex> A12 = Cl12(Xh2,Xh1);
+	matrix <complex> A21 = Cl21(Xh1,Xh2);
+	A22 = A22+EFL;
+
+	complex[int] F22 = Cl2(0,Xh2);
+	complex[int] F11 = Cl1(0,Xh1);
+	matrix <complex> ACOMP=[[A22,A21],[A12,A11]];
+	set(ACOMP,solver=UMFPACK);
+
+
+	// ----------------------------------------------------------------------------------------
+	// Construction of the second member (the sources coming from the different incident waves)
+	// ----------------------------------------------------------------------------------------
+
+	complex[int,int] Adef(2*nbfpro+1,Ninc);
+	Xh2<complex> UI = 0.;
+	Xh2<complex> f = 0.;
+	matrix<complex> FarFour;
+
+	for (int Nd=0; Nd<Ninc ; Nd++)
+	{	real IncidenceAngle=Nd*2.*pi/(Ninc);
+		real d1=cos(IncidenceAngle), d2=sin(IncidenceAngle);
+
+		//Fourier basis rotated so (d1,d2) coincides with the origin
+
+		for (int n=-nbfpro;n<nbfpro+1;n++)
+		{
+			func fp = expinp(x,y,n,R,IncidenceAngle);
+			varf FiniFourierp(u,v) = int1d(Mh2,2)(v*fp);
+			complex[int] tempp = FiniFourierp(0,Xh2);
+			vDtNp(:,n+nbfpro)=tempp;
+		}
+
+		Mp=vDtNp;
+		FarFour = Dfar*Mp';
+
+		if (typeuinc==0)
+		// onde plane u^i=exp(i k d.x) et d=(d1,d2)
+		{
+		func dscalx = d1*x + d2*y;
+		func dscaln = d1*cos(atan2(y,x))+d2*sin(atan2(y,x));
+		func uinc = exp(1.i*k*dscalx);
+		func duinc = (1.i*k*dscaln)*exp(1.i*k*dscalx);
+		UI = uinc;
+		f = duinc;
+		}
+		else if (typeuinc==1)
+		// Onde incidente point source
+		{
+		func XmX0 = sqrt((x-x0)^2+(y-y0)^2);
+		func uincpoint = jn(0,k*XmX0)+1.i*yn(0,k*XmX0);
+		func XmX0scaln = k*((x-x0)*cos(atan2(y,x))+(y-y0)*sin(atan2(y,x)))/XmX0;
+		func duincpoint = -XmX0scaln*(jn(1,k*XmX0)+1.i*yn(1,k*XmX0));
+		UI = uincpoint;
+		f = duincpoint;
+		}
+
+		varf impclass(u2,v2)=int1d(Mh2,2)(f*v2);
+		complex[int] F = impclass(0,Xh2);
+		complex[int] temp=EFL*UI[];
+		F=F+temp;
+
+		// ---------------------------------------------------------------
+		// Solving the equation
+		// ---------------------------------------------------------------
+		complex[int] F22temp = F22+F;	
+		complex[int] FF=[F22temp,F11];
+
+		complex[int] Tot = ACOMP^-1*FF;
+		[u2[],u1[]]=Tot;
+		if(plotsol=="true"){
+			Xh2 uplot2;
+			Xh1 uplot1;
+			uplot2 = real(u2);
+			uplot1 = real(u1);
+			plot(uplot2, uplot1, wait=1,fill=1,ps="TotalFieldCrack.eps");	
+		}
+	
+		// ---------------------------------------------------------------
+		// Computation of the scattered field
+		// ---------------------------------------------------------------
+		Xh2<complex> us;
+		us = u2-UI;
+
+		// ---------------------------------------------------------------
+		// Computation and storage of the far-field pattern Fourier coeff's
+		// ---------------------------------------------------------------
+		complex[int] usfarfour;
+		usfarfour = FarFour*us[];
+		Adef(:,Nd)=usfarfour;
+	}
+	saveFF(folder + "/"+ filenameCrack, "Adef", k, Adef, Ninc, 2*nbfpro+1,rn1,rn11);
+
+}
+
+if(scatterer=="kite2"){
+	cout<<"scatterer="<<scatterer<<endl;
+	cout<<"MediumType="<<MediumType<<endl;
+
+	// Parameters for the ATC
+	func fplus1 = -(d^-2)*(atan2(y,x)+d)*(atan2(y,x)-d);
+	func fplus2 = -(d^-2)*(atan2(y,x)-(pi/2)+d)*(atan2(y,x)-(pi/2)-d);
+		// For f- = 0.
+	func fminus = 0.;
+	func alpha01 = fplus1*( (rmu0+1.i*imu0) - 1. ) 
+			+ fminus*( (rmu0+1.i*imu0) - (rmu1 + 1.i*imu1) )
+			;
+	func beta11 = fplus1*( (1./(rmu0+1.i*imu0)) - 1. )
+			+ fminus*( (1/(rmu0+1.i*imu0)) - (1./(rmu1 + 1.i*imu1)) )
+			;
+	func beta21 = fplus1*k^2*(1.-(rn0+1.i*in0))
+			+ fminus*k^2*((rn1+1.i*in1)-(rn0+1.i*in0))
+			;
+	func alpha02 = fplus2*( (rmu0+1.i*imu0) - 1. ) 
+			+ fminus*( (rmu0+1.i*imu0) - (rmu1 + 1.i*imu1) )
+			;
+	func beta12 = fplus2*( (1./(rmu0+1.i*imu0)) - 1. )
+			+ fminus*( (1/(rmu0+1.i*imu0)) - (1./(rmu1 + 1.i*imu1)) )
+			;
+	func beta22 = fplus2*k^2*(1.-(rn0+1.i*in0))
+			+ fminus*k^2*((rn1+1.i*in1)-(rn0+1.i*in0))
+			;
+	func alpha1 = 10.^-9;
+
+	// Construction of the matrix to be inverted
+
+	macro ds(u) (-dx(u)*N.y+dy(u)*N.x)//
+	varf Cl2(u2,v2)=  int2d(Mh2)((1./mu)*(dx(u2)*dx(v2)+dy(u2)*dy(v2)))
+			+ int2d(Mh2)(-k^2.*eps*(u2*v2))
+			+ int1d(Mh2,0)(delta*0.25*beta11*ds(u2)*ds(v2)) //need to have positive beta 1
+			+ int1d(Mh2,0)(0.25*delta*beta21*u2*v2)
+			+ int1d(Mh2,0)((delta^-1)*(alpha01^-1)*u2*v2)
+
+			+ int1d(Mh2,-1)(delta*0.25*beta12*ds(u2)*ds(v2)) //need to have positive beta 1
+			+ int1d(Mh2,-1)(0.25*delta*beta22*u2*v2)
+			+ int1d(Mh2,-1)((delta^-1)*(alpha02^-1)*u2*v2)
+
+			+ int1d(Mh2,1)((alpha1^-1)*u2*v2)
+			//+ int1d(Mh2,0)((alpha1^-1)*u2*v2)
+			;
+
+	varf Cl1(u1,v1)=int2d(Mh1)((1/(rmu1+1.i*imu1))*(dx(u1)*dx(v1)+dy(u1)*dy(v1)))
+			+ int2d(Mh1)(-k^2.*(rn1+1.i*in1)*(u1*v1))
+			+ int1d(Mh1,0)(delta*0.25*beta11*ds(u1)*ds(v1))
+			+ int1d(Mh1,0)(0.25*delta*beta21*u1*v1)
+			+ int1d(Mh1,0)((delta^-1)*(alpha01^-1)*u1*v1)
+
+			+ int1d(Mh1,-1)(delta*0.25*beta12*ds(u1)*ds(v1))
+			+ int1d(Mh1,-1)(0.25*delta*beta22*u1*v1)
+			+ int1d(Mh1,-1)((delta^-1)*(alpha02^-1)*u1*v1)
+
+			+ int1d(Mh1,1)((alpha1^-1)*u1*v1)
+			//+ int1d(Mh1,0)((alpha1^-1)*u1*v1)
+			;
+
+	varf Cl12(u2,v1)=int1d(Mha,0)(delta*0.25*beta11*ds(u2)*ds(v1))
+			+ int1d(Mha,0)(0.25*delta*beta21*u2*v1)
+			+ int1d(Mha,0)(-(delta^-1)*(alpha01^-1)*u2*v1)
+
+			+ int1d(Mha,-1)(delta*0.25*beta12*ds(u2)*ds(v1))
+			+ int1d(Mha,-1)(0.25*delta*beta22*u2*v1)
+			+ int1d(Mha,-1)(-(delta^-1)*(alpha02^-1)*u2*v1)
+
+			+ int1d(Mha,1)(-(alpha1^-1)*u2*v1)				
+			//+ int1d(Mha,0)(-(alpha1^-1)*u2*v1)				
+			;
+
+	varf Cl21(u1,v2)=int1d(Mha,0)(delta*0.25*beta11*ds(u1)*ds(v2))
+			+ int1d(Mha,0)(0.25*delta*beta21*u1*v2)
+			+ int1d(Mha,0)(-(delta^-1)*(alpha01^-1)*u1*v2)
+
+			+ int1d(Mha,0)(delta*0.25*beta12*ds(u1)*ds(v2))
+			+ int1d(Mha,0)(0.25*delta*beta22*u1*v2)
+			+ int1d(Mha,0)(-(delta^-1)*(alpha02^-1)*u1*v2)
+
+			+ int1d(Mha,1)(-(alpha1^-1)*u1*v2)
+			//+ int1d(Mha,0)(-(alpha1^-1)*u1*v2)
+			;
+
+	matrix <complex> A22 = Cl2(Xh2,Xh2);
+	matrix <complex> A11 = Cl1(Xh1,Xh1);
+	matrix <complex> A12 = Cl12(Xh2,Xh1);
+	matrix <complex> A21 = Cl21(Xh1,Xh2);
+	A22 = A22+EFL;
+
+	complex[int] F22 = Cl2(0,Xh2);
+	complex[int] F11 = Cl1(0,Xh1);
+	matrix <complex> ACOMP=[[A22,A21],[A12,A11]];
+	set(ACOMP,solver=UMFPACK);
+
+
+	// ----------------------------------------------------------------------------------------
+	// Construction of the second member (the sources coming from the different incident waves)
+	// ----------------------------------------------------------------------------------------
+
+	complex[int,int] Adef(2*nbfpro+1,Ninc);
+	Xh2<complex> UI = 0.;
+	Xh2<complex> f = 0.;
+	matrix<complex> FarFour;
+
+	for (int Nd=0; Nd<Ninc ; Nd++)
+	{	real IncidenceAngle=Nd*2.*pi/(Ninc);
+		real d1=cos(IncidenceAngle), d2=sin(IncidenceAngle);
+
+		//Fourier basis rotated so (d1,d2) coincides with the origin
+
+		for (int n=-nbfpro;n<nbfpro+1;n++)
+		{
+			func fp = expinp(x,y,n,R,IncidenceAngle);
+			varf FiniFourierp(u,v) = int1d(Mh2,2)(v*fp);
+			complex[int] tempp = FiniFourierp(0,Xh2);
+			vDtNp(:,n+nbfpro)=tempp;
+		}
+
+		Mp=vDtNp;
+		FarFour = Dfar*Mp';
+
+		if (typeuinc==0)
+		// onde plane u^i=exp(i k d.x) et d=(d1,d2)
+		{
+		func dscalx = d1*x + d2*y;
+		func dscaln = d1*cos(atan2(y,x))+d2*sin(atan2(y,x));
+		func uinc = exp(1.i*k*dscalx);
+		func duinc = (1.i*k*dscaln)*exp(1.i*k*dscalx);
+		UI = uinc;
+		f = duinc;
+		}
+		else if (typeuinc==1)
+		// Onde incidente point source
+		{
+		func XmX0 = sqrt((x-x0)^2+(y-y0)^2);
+		func uincpoint = jn(0,k*XmX0)+1.i*yn(0,k*XmX0);
+		func XmX0scaln = k*((x-x0)*cos(atan2(y,x))+(y-y0)*sin(atan2(y,x)))/XmX0;
+		func duincpoint = -XmX0scaln*(jn(1,k*XmX0)+1.i*yn(1,k*XmX0));
+		UI = uincpoint;
+		f = duincpoint;
+		}
+
+		varf impclass(u2,v2)=int1d(Mh2,2)(f*v2);
+		complex[int] F = impclass(0,Xh2);
+		complex[int] temp=EFL*UI[];
+		F=F+temp;
+
+		// ---------------------------------------------------------------
+		// Solving the equation
+		// ---------------------------------------------------------------
+		complex[int] F22temp = F22+F;	
+		complex[int] FF=[F22temp,F11];
+
+		complex[int] Tot = ACOMP^-1*FF;
+		[u2[],u1[]]=Tot;
+		if(plotsol=="true"){
+			Xh2 uplot2;
+			Xh1 uplot1;
+			uplot2 = real(u2);
+			uplot1 = real(u1);
+			plot(uplot2, uplot1, wait=1,fill=1,ps="TotalFieldCrack.eps");	
+		}
+	
+		// ---------------------------------------------------------------
+		// Computation of the scattered field
+		// ---------------------------------------------------------------
+		Xh2<complex> us;
+		us = u2-UI;
+
+		// ---------------------------------------------------------------
+		// Computation and storage of the far-field pattern Fourier coeff's
+		// ---------------------------------------------------------------
+		complex[int] usfarfour;
+		usfarfour = FarFour*us[];
+		Adef(:,Nd)=usfarfour;
+	}
+	saveFF(folder + "/"+ filenameCrack, "Adef", k, Adef, Ninc, 2*nbfpro+1,rn1,rn11);
+}
+

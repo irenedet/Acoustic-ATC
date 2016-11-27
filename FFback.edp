@@ -1,0 +1,217 @@
+//----------------------------------------------------------------
+include "auxfunc.edp";
+include "parameters.edp";
+//----------------------------------------------------------------
+fespace Xh(Mh,P2);
+fespace Ph(Mh,P0);
+// ---------------------------------------------------------------
+//savemesh(Mh,"mesh_sample.msh");
+Ph reg=region, domain1, domain11, domain2, reps, ieps, rmu, imu;
+int ireg1,ireg11,ireg2;
+
+//if(MediumType == "layered"){
+	ireg1 = reg(0,0); //, ireg2=reg(xc2,yc2), ireg3=reg(xc3,yc3), ireg4=reg(xc4,yc4);
+	ireg11 = reg(0,(r+R)/2-0.5); //, ireg2=reg(xc2,yc2), ireg3=reg(xc3,yc3), ireg4=reg(xc4,yc4);
+	ireg2 = reg(0, 0.9*R);
+	domain1 = 0. + 1.*(region==ireg1);//inner circle
+	domain11 = 0. + 1.*(region==ireg11);//layer
+	domain2 = 0. + 1.*(region==ireg2);//outer circle
+	reps = 1.*domain2 + rn11*domain11 + rn1*domain1;//|region==ireg2|region==ireg3|region==ireg4);
+	ieps = 0. + in11*domain11 + in1*domain1; //|region==ireg2|region==ireg3|region==ireg4);
+	rmu   = 1. ;//+ rdinvmu*(region==ireg1|region==ireg2|region==ireg3|region==ireg4);
+	imu   = 0. ;//+ idinvmu*(region==ireg1|region==ireg2|region==ireg3|region==ireg4);
+//}
+Ph<complex> eps = reps + 1.i*ieps;
+Ph<complex> mu = rmu + 1.i*imu;
+
+if(plotsol == "true"){
+	plot(reps, wait=1,fill=1);
+}
+
+// ---------------------------------------------------------------
+//	Construction du DtN		  
+// ---------------------------------------------------------------
+Xh<complex>  u,v;
+
+//matrice d'integration exp(intheta) contre les  elements finis sur le bord
+complex[int,int] vDtN( Xh.ndof, 2*nbfpro+1);
+complex[int,int] vDtNp( Xh.ndof, 2*nbfpro+1);
+matrix<complex> DtN, Mp;
+
+for (int n=-nbfpro;n<nbfpro+1;n++)
+{
+	func f = expinp(x,y,n,R,0.);
+	varf FiniFourier(u,v) = int1d(Mh,2)(v*f);
+	complex[int] temp = FiniFourier(0,Xh);
+	vDtN(:,n+nbfpro)=temp;// Fourier coefficients of the FES basis functions
+
+}
+DtN=vDtN;
+//M=vDtN;
+
+// Construction de la matrice diagonale pour construire les EFL
+// et de la matrice diagonale pour construire le champ lointaine
+matrix<complex> D;// diagonal for the DtN map
+matrix<complex> Dfar;
+complex[int] diagofD(2*nbfpro+1);// vector that will correspond to diagonal values of D
+complex[int] diagofDfar(2*nbfpro+1);
+
+complex hnr,hnm,hn0,hn1,hnp;
+
+hn0=jn(0,k*R)+1.i*yn(0,k*R);
+hn1=jn(1,k*R)+1.i*yn(1,k*R);
+diagofD[nbfpro] = k*hn1/hn0;
+diagofDfar[nbfpro] = sqrt(2./(pi*k*1.))*(1./hn0)*exp(-1.i*pi/4)*sqrt(1./(2.*pi*R));//
+
+for (int n =1;n<nbfpro;n++)
+{
+	hnr = jn(n,k*R)+1.i*yn(n,k*R);//hn
+	hnm = jn(-n,k*R)+1.i*yn(-n,k*R);;//h-n
+	hnp = -n*hnr/(k*R) + (jn(n+1,k*R)+1.i*yn(n+1,k*R));//hn prime
+	diagofD[nbfpro+n] = k*hnp/hnr;
+	diagofD[nbfpro-n] = k*hnp/hnr;
+	
+	diagofDfar[nbfpro+n] = sqrt(1./(2.*pi*R))*(1./hnr)*exp(-1.i*((n*pi/2)+(pi/4)))*sqrt(2./(pi*k*1.));
+	diagofDfar[nbfpro-n] = sqrt(1./(2.*pi*R))*(1./hnm)*exp(-1.i*((-n*pi/2)+(pi/4)))*sqrt(2./(pi*k*1.));
+}
+D = [diagofD];
+Dfar = [diagofDfar];
+
+// Final assemling for the DtN map in FES
+matrix<complex> EFL ;
+EFL = DtN*D;
+EFL = EFL*DtN';
+
+matrix<complex> FarF;
+matrix<complex> FarFour;
+
+// ---------------------------------------------------------------
+// Variational formulation
+// ---------------------------------------------------------------
+
+Xh<complex> sol;
+
+// construction de la matrice à inverser
+macro ds(u1) (-dx(u1)*N.y+dy(u1)*N.x)	//
+
+varf Cl(u,v)=int2d(Mh)((1./mu)*(dx(u)*dx(v)+dy(u)*dy(v)))
+		- int2d(Mh)(k^2*eps*(u*v))
+		//+ on(1, u=0)
+		;
+matrix<complex> A = Cl(Xh,Xh);
+matrix<complex> C = A+EFL;
+set(C,solver=UMFPACK);
+
+// ---------------------------------------------------------------
+//construction du second membre
+// ---------------------------------------------------------------
+Xh<complex> UI = 0.;
+Xh<complex> f = 0.;
+
+complex[int,int] Aback(2*nbfpro+1,Ninc);
+complex[int,int] RHS(Ninc,Nsample);
+
+for (int Nd=0; Nd<Ninc ; Nd++){
+	real IncidenceAngle=Nd*2.*pi/Ninc;
+	real d1=cos(IncidenceAngle), d2=sin(IncidenceAngle);
+
+	//Fourier basis rotated so (d1,d2) coincides with the origin
+	for (int n=-nbfpro;n<nbfpro+1;n++)
+	{
+		func fp = expinp(x,y,n,R,IncidenceAngle);
+		varf FiniFourierp(u,v) = int1d(Mh,2)(v*fp);
+		complex[int] tempp = FiniFourierp(0,Xh);
+		vDtNp(:,n+nbfpro)=tempp;
+	}
+
+	Mp=vDtNp;
+	FarFour = Dfar*Mp';
+
+
+	if (typeuinc==0)
+	// plane wave u^i=exp(i kd.x) et d=(1,0)
+	{
+	//real d1=1.;
+	//real d2=0.;
+	func dscalx = d1*x + d2*y;
+	func dscaln = d1*cos(atan2(y,x))+d2*sin(atan2(y,x));
+	func uinc = exp(1.i*k*dscalx);
+	func duinc = (1.i*k*dscaln)*exp(1.i*k*dscalx);
+	UI = uinc;
+	f = duinc;
+	}
+	else if (typeuinc==1)
+	// Onde incidente point source
+	{
+	//real x0 = 6.*lambda;
+	//real y0 = 0.;
+	func XmX0 = sqrt((x-x0)^2+(y-y0)^2);
+	func uincpoint = jn(0,k*XmX0)+1.i*yn(0,k*XmX0);
+	func XmX0scaln = k*((x-x0)*cos(atan2(y,x))+(y-y0)*sin(atan2(y,x)))/XmX0;
+	func duincpoint = -XmX0scaln*(jn(1,k*XmX0)+1.i*yn(1,k*XmX0));
+	UI = uincpoint;
+	f = duincpoint;
+	}
+	varf impclass(u,v)=int1d(Mh,2)(f*v);
+	complex[int] F = impclass(0,Xh);
+	complex[int] temp=EFL*UI[];
+	F=F+temp;
+
+	// ---------------------------------------------------------------
+	//résolution et affichage
+	// ---------------------------------------------------------------
+	sol[] = C^-1*F;
+	
+	// ---------------------------------------------------------------
+	// Approximate scattered field
+	// ---------------------------------------------------------------
+	Xh<complex> us;
+	complex[int] usfarfour;
+	us = sol-UI;
+
+	//Xh<complex> dus;
+	//dus[] = EFL*us[];
+	
+	if(plotsol=="true"){
+		Xh uplot;
+		uplot = imag(sol);
+		plot(uplot, wait=1, fill=1);
+	}
+
+	// ---------------------------------------------------------------
+	// Approximate far-field pattern
+	// ---------------------------------------------------------------
+	usfarfour = FarFour*us[];//Approximate far field in the Fourier basis
+	
+	Aback(:,Nd)=usfarfour;//ERROR-->OUT OF BOUND when Ninc=64
+
+	int Ns;
+	Ns=(Nd+0.5*(Ninc))%(Ninc);
+	cout<< "Ns = " << Ns << endl;
+	real x1,y1,x2,y2;
+	
+	if(scatterer=="circle"){
+		for (int m = 0;m<Nsample;m++)
+		{ 	
+			x1 = r*cos(2.*pi*m/(Nsample));
+			y1 = r*sin(2.*pi*m/(Nsample));
+			RHS(Ns,m)=sol(x1,y1);		
+		}
+	}
+	if(scatterer=="kite"||scatterer=="kite2"){
+		for (int m = 0;m<Nsample;m++)
+		{ 	
+			x1 = r*(cos(2.*pi*m/(Nsample)) + .65*cos(2.*(2.*pi*m/(Nsample))) - .3);
+			y1 = (r+.5)*sin(2.*pi*m/(Nsample));
+			RHS(Ns,m)=sol(x1,y1);		
+		}
+	}
+
+
+}
+//////////////////////////////////////////////////////////////////////
+// Writing the Matlab file that plots the far-field pattern:
+//////////////////////////////////////////////////////////////////////
+saveFF(folder + "/"+ filenameBack, "Aback", k, Aback, Ninc, 2*nbfpro+1,rn1,rn11);
+saveRHS(folder + "/"+ filenameRHS, k, RHS, Nsample, Ninc);
+

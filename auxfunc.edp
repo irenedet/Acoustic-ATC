@@ -1,0 +1,56 @@
+//fonction de la base de fourier
+//func complex expin(real x1,real x2, int n, real R)
+//{
+//	real theta = atan2(x2,x1);
+//	return (exp(1.i*n*theta)/sqrt(2.*pi*R));
+//}
+
+func complex expinp(real x1,real x2, int n, real R, real IncidenceAngle)
+{
+	real theta = atan2(x2,x1)-IncidenceAngle;
+	return (exp(1.i*n*theta)/sqrt(2.*pi*R));
+}
+
+func bool saveFF(string filenameBack, string matrixname, real k, complex[int,int] Aback,int Ninc,int Nrows,real rn1,real rn11){
+
+	ofstream fileFF(filenameBack);
+	fileFF << "%/This is an output of the code FFbackground.edp " << endl;
+	fileFF << "%/Here we generate the Fourier coeff matrix associated to Ninc " << endl;
+	fileFF << "%/incident waves, which are stored in  " << endl;
+	fileFF << "%/k= wave number and d=(d1,d2) the direction vectors." << endl;
+	fileFF << "rn1 = " << rn1<< ",rn11 = " << rn11 << ";" << endl;
+	fileFF << "k = " << k << ";" << endl;
+	fileFF << matrixname << "=[..." << endl;
+	for (int Nd=0; Nd<Ninc ; Nd++)
+	{
+		for (int m =0;m<Nrows;m++)
+		{
+			fileFF  << real(Aback(m,Nd)) << "+ 1i*" << imag(Aback(m,Nd)) << ",..." << endl;
+		}
+		if (Nd != Ninc-1)
+		{
+			fileFF << ";..." << endl;
+		}
+	}
+	fileFF << "];" << endl;
+	return 0;
+}
+
+func bool saveRHS(string filenameRHS, real k, complex[int,int] RHS, int Nsample,int Ninc){
+
+	ofstream fileRHS(filenameRHS);
+	fileRHS << "rhs=[..." << endl;
+	for (int Nd = 0; Nd<Ninc; Nd++)
+	{
+		for (int m = 0;m<Nsample;m++)
+		{
+			fileRHS  << real(RHS(Nd,m)) << "+ 1i *" << imag(RHS(Nd,m))
+			<< ",..." << endl;
+		}
+		if (Nd != Ninc-1) {fileRHS << ";..." << endl;}
+	}
+
+	fileRHS << "];" << endl;
+	return 0;
+}
+

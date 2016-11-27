@@ -1,0 +1,313 @@
+////////////
+string scatterer = "kite2"; // can also be kite, circle or kite2 for double cracks
+string MediumType = "layered";// "layered" or "nonlayered"
+
+string folder = scatterer + "_crack_" + MediumType;
+string filenameCrack = scatterer +  "_crack_farfield_"+ MediumType +".m" ;
+string filenameBack = scatterer +  "_back_farfield_"+ MediumType +".m";
+string filenameRHS = scatterer +  "_RHS_farfield_"+ MediumType +".m";
+
+string plotsol = "false";// "false" or "true"
+
+// Number of incident waves and sample points for the interface where the crack can be
+int Ninc=40;
+int Nsample = 64;
+
+// ------- Parameters ------------------------------------------
+//Geometrical parameters and wave number
+real k = 3. ; // wave number
+real lambda = 2.*pi/k; //
+real R = 4.*pi/3;//2.*lambda; // Rayon du cercle exterieur
+real unit = 2.*pi/3;  // unite de mesure
+real r = 1.;//unit;  // inner circle radius
+real d = 0.2*pi;//crack support length
+real delta = 0.04;//thickness of delamination
+
+
+// Physical variables 
+real rn1 = 4., in1 = 0.;// epsilon in the interior
+real rn11 = 2.,in11 = 0.;// epsilon in the layer
+//real rn2 = 1., in2 = 0.;// epsilon in the exterior
+real rn0 = 0.2, in0 = 0.;// epsilon in the bubble
+
+real rmu1 = 1., imu1 = 0. ;//mu in the interior
+real rmu11 = 1.,imu11 = 0.;// epsilon in the layer
+//real rmu2 = 1., imu2 = 0. ;//mu in the exterior
+real rmu0 = 0.9, imu0 = 0. ;//mu in the bubble
+
+if(MediumType == "nonlayered"){
+	rn11=1.;
+	in11=0.;
+	rmu11=1.;
+	imu11=0.;
+}
+
+// Incident wave
+int typeuinc = 0 ; // 0 = plane wave, 1 = point source
+real x0=0., y0 = 2.5*lambda; // pour le point source
+
+//number of nodes on the curves 
+real deltx =lambda/20;//step in space
+int pext = 20*4*pi*R/lambda;//20*2*pi*R/lambda;
+//real deltin = lambda/10; // pas en espace
+//int pin = 20*2*pi*R/lambda;
+
+// Nomber of terms in the Fourier expansion of the DtN
+int nbfpro = pext/10;
+cout<<"Number of Fourier Coef for DtN="<<nbfpro<<endl;
+
+// ---------------------------------------------------------------
+
+
+
+// Exterior boundary
+border Sigmaext(t=0,2.*pi){x=R*cos(t);y=R*sin(t);label=2;};
+
+//Construction of the mesh and the finite element space
+                   
+if (scatterer == "circle" && MediumType == "nonlayered")
+{	int Nunit = 12.*pi*r/deltx;
+	Nunit = max(Nunit, 5);
+	int Nunit1 = 15*(pi-d)*r/deltx;
+	int Nunit2 = 15*d*r/deltx; 	
+	border NonCrack(t=d,2.*pi-d){x=r*cos(t);y=r*sin(t);label=1;}; // Bord interieur
+	border Crack(t=-d,d){x=r*cos(t);y=r*sin(t);label=0;}; // Support de la bubble
+
+	// Mesh for FFback.edp
+	border gamma(t=0,2.*pi){x=r*cos(t);y=r*sin(t);label=1;};
+
+	mesh Mh = buildmesh(gamma(Nunit) +
+		           Sigmaext(pext));
+	//plot(Mh,wait=1);
+
+	// Mesh for FFcrack.edp
+	mesh Mh2 = buildmesh(NonCrack(-Nunit1) + 
+			   Crack(-Nunit2) +
+			   Sigmaext(pext)); // Maillage de la région exterieur
+
+	mesh Mh1 = buildmesh(NonCrack(Nunit1) +
+			   Crack(Nunit2));  // Maillage de la région interieur
+
+	mesh Mha = Mh1 + Mh2;
+
+	savemesh(Mh, "mesh.msh");
+	savemesh(Mh1, "mesh1.msh");
+	savemesh(Mh2, "mesh2.msh");
+	savemesh(Mha, "mesha.msh");
+
+}
+if (scatterer == "kite" && MediumType == "nonlayered")
+{
+	int Nunit = 12.*pi*r/deltx;
+	//cout << "Nunit=" << Nunit<<endl;
+	Nunit = max(Nunit, 5);
+	int Nunit1 = 15*(pi-d)*r/deltx;
+	int Nunit2 = 15*d*r/deltx; 	
+	border NonCrack(t=d,2.*pi-d){x = r*(cos(t) + .65*cos(2.*t) - .3); y = (r+.5)*sin(t); label = 1;}; // Bord interieur
+	border Crack(t=-d,d){x = r*(cos(t) + .65*cos(2.*t) - .3); y = (r+.5)*sin(t); label = 0;}; // Support de la bubble
+
+	// Meshes
+	border gamma(t=0,2.*pi){x = r*(cos(t) + .65*cos(2.*t) - .3); y = (r+.5)*sin(t); label = 1;};
+
+	mesh Mh = buildmesh(gamma(Nunit) +
+		           Sigmaext(pext));
+
+	mesh Mh2 = buildmesh(NonCrack(-Nunit1) + 
+			   Crack(-Nunit2) +
+			   Sigmaext(pext)); // Maillage de la région exterieur
+
+	mesh Mh1 = buildmesh(NonCrack(Nunit1) +
+			   Crack(Nunit2));  // Maillage de la région interieur
+
+	mesh Mha = Mh1 + Mh2;
+
+	savemesh(Mh, "mesh.msh");
+	savemesh(Mh1, "mesh1.msh");
+	savemesh(Mh2, "mesh2.msh");
+	savemesh(Mha, "mesha.msh");
+}
+
+if (scatterer == "kite2" && MediumType == "nonlayered")
+//kite with two cracks
+{	int Nunit = 12*pi*r/deltx;
+	Nunit = max(Nunit, 5);
+	int Nunit1 = 15*(pi-d)*r/deltx;
+	Nunit1=Nunit1*0.2;
+	int Nunit2 = 15*d*r/deltx; 	
+	border NonCrack1(t=d,pi/2-d){x = r*(cos(t) + .65*cos(2.*t) - .3); y = (r+.5)*sin(t); label = 1;}; 
+	border NonCrack2(t=pi/2+d,2.*pi-d){x = r*(cos(t) + .65*cos(2.*t) - .3); y = (r+.5)*sin(t); label = 1;}; 
+	border Crack1(t=pi/2-d,pi/2+d){x = r*(cos(t) + .65*cos(2.*t) - .3); y = (r+.5)*sin(t); label = 0;};
+	border Crack2(t=-d,d){x = r*(cos(t) + .65*cos(2.*t) - .3); y = (r+.5)*sin(t); label = -1;};
+
+	border gamma(t=0,2.*pi){x = r*(cos(t) + .65*cos(2.*t) - .3); y = (r+.5)*sin(t); label = 1;};
+
+	mesh Mh = buildmesh(gamma(Nunit) +
+		           Sigmaext(pext));
+
+	mesh Mh2 = buildmesh(NonCrack1(-Nunit1*0.3) + 
+			   Crack1(-Nunit2) +
+			   NonCrack2(-Nunit1) +
+			   Crack2(-Nunit2) + 
+			   Sigmaext(pext)); // Maillage de la région exterieur
+
+	mesh Mh1 = buildmesh(NonCrack1(Nunit1*0.3) + 
+			   Crack1(Nunit2) +
+			   NonCrack2(Nunit1) +
+			   Crack2(Nunit2));  // Maillage de la région interieur
+
+	mesh Mha = Mh1 + Mh2;
+//	plot(NonCrack1(Nunit1*0.3), 
+//			   Crack1(Nunit2),
+//			   NonCrack2(Nunit1),
+//			   Crack2(Nunit2), wait=1);  // Maillage de la région interieur
+
+
+	savemesh(Mh, "mesh.msh");
+	savemesh(Mh1, "mesh1.msh");
+	savemesh(Mh2, "mesh2.msh");
+	savemesh(Mha, "mesha.msh");
+}
+////////////////////////////
+int Nint = pext/10;	
+if (scatterer == "circle" && MediumType == "layered")
+{	 
+	int Nunit = 6*pi*r/deltx;//12.*pi*r/deltx;
+	//cout << "Nunit=" << Nunit<<endl;
+	Nunit = max(Nunit, 5);
+	int Nunit1 = 15*(pi-d)*r/deltx;
+	int Nunit2 = 15*d*r/deltx; 	
+	border NonCrack(t=d,2.*pi-d){x=r*cos(t);y=r*sin(t);label=1;}; // Bord interieur
+	border Crack(t=-d,d){x=r*cos(t);y=r*sin(t);label=0;}; // Support de la bubble
+ 	real aa=0.5*(R+r);
+    	real bb=0.5*(R+r);
+    	border interlayer(t=0.,2.*pi){
+		x=(2./sqrt(5))*(aa*cos(t)+0.01*cos(10.*t))-(1./sqrt(2))*(bb*sin(t)+0.01*sin(10.*t));
+		y=(1./sqrt(5))*(aa*cos(t)+0.1*cos(10.*t))+(1./sqrt(2))*(bb*sin(t)+0.1*sin(10.*t));
+		label=11;};
+		
+	border gamma(t=0,2*pi){x=r*cos(t);y=r*sin(t);label=1;};
+
+	mesh Mh = buildmesh(gamma(Nunit) +
+			   interlayer(Nint) +
+		           Sigmaext(pext));
+	plot(Mh,wait=1);
+
+	mesh Mh2 = buildmesh(NonCrack(-Nunit1) + 
+			   Crack(-Nunit2) +
+			   interlayer(Nint) +
+			   Sigmaext(pext)); // Maillage de la région exterieur
+	mesh Mh1 = buildmesh(NonCrack(Nunit1) +
+			   Crack(Nunit2));  // Maillage de la région interieur
+
+	mesh Mha = Mh1 + Mh2;
+	//plot(Mh3,wait=1);
+	plot(Mh2,wait=1);
+	plot(Mh1,wait=1);
+
+	savemesh(Mh, "mesh.msh");
+	savemesh(Mh1, "mesh1.msh");
+	savemesh(Mh2, "mesh2.msh");
+	savemesh(Mha, "mesha.msh");
+
+}
+if (scatterer == "kite" && MediumType == "layered")
+{	int Nunit = 0.5*12.*pi*r/deltx;
+	//cout << "Nunit=" << Nunit<<endl;
+	Nunit = max(Nunit, 5);
+	int Nunit1 = 0.5*15*(pi-d)*r/deltx;
+	int Nunit2 = 0.5*15*d*r/deltx; 	
+	border NonCrack(t=d,2.*pi-d){x = r*(cos(t) + .65*cos(2.*t) - .3); y = (r+.5)*sin(t); label = 1;}; // Bord interieur
+	border Crack(t=-d,d){x = r*(cos(t) + .65*cos(2.*t) - .3); y = (r+.5)*sin(t); label = 0;}; // Support de la bubble
+
+	// Meshes
+	border gamma(t=0,2.*pi){x = r*(cos(t) + .65*cos(2.*t) - .3); y = (r+.5)*sin(t); label = 1;};
+ 	real aa=0.5*(R+r);
+    	real bb=0.5*(R+r);
+    	border interlayer(t=0.,2.*pi){
+		x=(2./sqrt(5))*(aa*cos(t)+0.01*cos(10.*t))-(1./sqrt(2))*(bb*sin(t)+0.01*sin(10.*t));
+		y=(1./sqrt(5))*(aa*cos(t)+0.1*cos(10.*t))+(1./sqrt(2))*(bb*sin(t)+0.1*sin(10.*t));
+		label=11;};
+
+	mesh Mh = buildmesh(gamma(Nunit) +
+			   interlayer(Nint) +
+		           Sigmaext(pext));
+	plot(Mh,wait=1);
+
+	//mesh Mh3 = buildmesh(interlayer(-Nint)
+	//		+ Sigmaext(pext)); // Maillage de la région exterieur
+
+	mesh Mh2 = buildmesh(NonCrack(-Nunit1) + 
+			   Crack(-Nunit2) +
+			   interlayer(Nint) +
+			   Sigmaext(pext)); // Maillage de la région exterieur
+	mesh Mh1 = buildmesh(NonCrack(Nunit1) +
+			   Crack(Nunit2));  // Maillage de la région interieur
+
+	mesh Mha = Mh1 + Mh2;
+	//mesh Mh12 = Mh1 + Mh2;
+	//mesh Mh23 = Mh2 + Mh3;
+	//mesh Mh13 = Mh1 + Mh3;
+	//plot(Mh3,wait=1);
+	plot(Mh2,wait=1);
+	plot(Mh1,wait=1);
+
+	savemesh(Mh, "mesh.msh");
+	savemesh(Mh1, "mesh1.msh");
+	savemesh(Mh2, "mesh2.msh");
+	savemesh(Mha, "mesha.msh");
+}
+
+if (scatterer == "kite2" && MediumType == "layered")
+//kite with two cracks
+{	int Nunit = 12*pi*r/deltx;
+	//cout << "Nunit=" << Nunit<<endl;
+	Nunit = max(Nunit, 5);
+	int Nunit1 = 15*(pi-d)*r/deltx;
+	Nunit1=Nunit1*0.2;
+	int Nunit2 = 15*d*r/deltx; 
+	int Nint = pext;	
+	border NonCrack1(t=d,pi/2-d){x = r*(cos(t) + .65*cos(2.*t) - .3); y = (r+.5)*sin(t); label = 1;}; 
+	border NonCrack2(t=pi/2+d,2.*pi-d){x = r*(cos(t) + .65*cos(2.*t) - .3); y = (r+.5)*sin(t); label = 1;}; 
+	border Crack1(t=pi/2-d,pi/2+d){x = r*(cos(t) + .65*cos(2.*t) - .3); y = (r+.5)*sin(t); label = 0;};
+	border Crack2(t=-d,d){x = r*(cos(t) + .65*cos(2.*t) - .3); y = (r+.5)*sin(t); label = -1;};
+
+	border gamma(t=0,2.*pi){x = r*(cos(t) + .65*cos(2.*t) - .3); y = (r+.5)*sin(t); label = 1;};
+	real aa=0.5*(R+r);
+    	real bb=0.5*(R+r);
+    	border interlayer(t=0.,2.*pi){
+		x=(2./sqrt(5))*(aa*cos(t)+0.01*cos(10.*t))-(1./sqrt(2))*(bb*sin(t)+0.01*sin(10.*t));
+		y=(1./sqrt(5))*(aa*cos(t)+0.1*cos(10.*t))+(1./sqrt(2))*(bb*sin(t)+0.1*sin(10.*t));
+		label=11;};
+	mesh Mh = buildmesh(gamma(Nunit) +
+			   interlayer(Nint) +
+		           Sigmaext(pext));
+
+	mesh Mh2 = buildmesh(NonCrack1(-Nunit1*0.3) + 
+			   Crack1(-Nunit2) +
+			   NonCrack2(-Nunit1) +
+			   Crack2(-Nunit2) + 
+			   interlayer(Nint) +
+			   Sigmaext(pext)); // Maillage de la région exterieur
+
+	mesh Mh1 = buildmesh(NonCrack1(Nunit1*0.3) + 
+			   Crack1(Nunit2) +
+			   NonCrack2(Nunit1) +
+			   Crack2(Nunit2));  // Maillage de la région interieur
+
+	mesh Mha = Mh1 + Mh2;
+
+	savemesh(Mh, "mesh.msh");
+	savemesh(Mh1, "mesh1.msh");
+	savemesh(Mh2, "mesh2.msh");
+	savemesh(Mha, "mesha.msh");
+}
+
+////////////////////////////
+mesh Mh = readmesh("mesh.msh");
+mesh Mh1 = readmesh("mesh1.msh");
+mesh Mh2 = readmesh("mesh2.msh");
+mesh Mha = readmesh("mesha.msh");
+
+if(plotsol=="true"){
+	plot(Mh,wait=1);
+}
